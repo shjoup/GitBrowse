@@ -1,10 +1,6 @@
 package dev.gitbrowse.app.ui
 
-import android.os.Bundle
-import androidx.activity.ComponentActivity
-import androidx.activity.SystemBarStyle
-import androidx.activity.compose.setContent
-import androidx.activity.enableEdgeToEdge
+
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -186,13 +182,24 @@ private fun HomeScreen(){
                     style = MaterialTheme.typography.bodyMedium,
                     color = Color.Gray
                 )
-                val results =
-                    if (selectedTab == "Repositories") {
-                        repositories
-                    } else {
-                        people
-                    }
+                val source = if (selectedTab == "Repositories") {
+                    repositories
+                } else {
+                    people
+                }
 
+                val results = source.filter {item ->
+                    item.title.contains(submitted, ignoreCase= true) ||
+                            item.description.contains(submitted, ignoreCase = true)
+                }
+
+
+                if (results.isEmpty()){
+                    Text(
+                        text = "No matches",
+                        color = Color.LightGray
+                    )
+                }
                 LazyColumn(
                     modifier = Modifier
                         .fillMaxWidth()
