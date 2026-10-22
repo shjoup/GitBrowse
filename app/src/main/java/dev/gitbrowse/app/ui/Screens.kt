@@ -17,15 +17,10 @@ import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
-import dev.gitbrowse.app.data.GitHubApi
-import dev.gitbrowse.app.data.GitHubApiException
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.viewmodel.compose.viewModel
+import dev.gitbrowse.app.SearchViewModel
 import dev.gitbrowse.app.data.SearchResult
-import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.launch
-import java.io.IOException
-
-
 
 
 
@@ -59,58 +54,32 @@ private fun PracticeTheme(content: @Composable () -> Unit){
 
 
 @Composable
-private fun HomeScreen(){
-    var query by rememberSaveable {mutableStateOf("")}
-    var selectedTab by rememberSaveable {
+private fun HomeScreen(model: SearchViewModel = viewModel()){
+    var query by rememberSaveable {
+        mutableStateOf("")
+    }
+    var selectedTab by rememberSaveable{
         mutableStateOf("Repositories")
     }
-    var submittedQuery by remember{
-        mutableStateOf<String?>(null)
-    }
 
-    var results by remember {
-        mutableStateOf<List<SearchResult>>(emptyList())
-    }
+    val uiState by model.uiState.collectAsStateWithLifecycle()
 
-    var isLoading by remember {mutableStateOf(false)}
-    var errorMessage by remember {mutableStateOf<String?>(null)}
+    val submittedQuery = uiState.submittedQuery
+    val results = uiState.results
+    val isLoading = uiState.isLoading
+    val errorMessage = uiState.errorMessage
 
-    val scope = rememberCoroutineScope()
-    var searchJob by remember {mutableStateOf<Job?>(null)}
     val focusManager = LocalFocusManager.current
 
     fun submitSearch(){
-        val cleanQuery = query.trim()
-        if (cleanQuery.isEmpty() || isLoading) return
-
-        val searchPeople = selectedTab == "People"
+        if (query.isBlank() || isLoading) return
 
         focusManager.clearFocus()
-        searchJob?.cancel()
 
-        submittedQuery = cleanQuery
-        results = emptyList()
-        errorMessage = null
-        isLoading = true
-
-        searchJob = scope.launch {
-            try {
-                results = GitHubApi.search(
-                    query = cleanQuery,
-                    searchPeople = searchPeople
-                )
-            } catch (e: CancellationException){
-                throw e
-            } catch (e: GitHubApiException) {
-                errorMessage = e.message
-            } catch (e:IOException) {
-                errorMessage = "Could not connect to Github"
-            } catch (e:Exception) {
-                errorMessage = "Could not read Github's response"
-            }
-            isLoading = false
-        }
-
+        model.search(
+            query = query,
+            searchPeople = selectedTab == "People"
+        )
     }
 
     Surface(
@@ -154,12 +123,10 @@ private fun HomeScreen(){
 
                     OutlinedButton(
                         onClick = {
-                            searchJob?.cancel()
-                            selectedTab = tab
-                            submittedQuery = null
-                            results = emptyList()
-                            errorMessage= null
-                            isLoading = false
+                            if (selectedTab != tab){
+                                selectedTab = tab
+                                model.reset()
+                            }
                         },
                         modifier = Modifier
                             .weight(1f)
