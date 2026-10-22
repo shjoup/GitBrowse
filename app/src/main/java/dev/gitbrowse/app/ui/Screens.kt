@@ -17,38 +17,18 @@ import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
+import dev.gitbrowse.app.data.GitHubApi
+import dev.gitbrowse.app.data.GitHubApiException
+import dev.gitbrowse.app.data.SearchResult
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.launch
+import java.io.IOException
 
 
-private data class DemoResult(
-    val title: String,
-    val description: String,
-)
-
-private val repositories = listOf(
-    DemoResult(
-        "sample/notes",
-        "note app",
-    ),
-    DemoResult(
-        "sample/task-tracker",
-        "task tracker app"
-    ),
-    DemoResult(
-        "sample/weather",
-        "weather-app"
-    ),
-)
 
 
-private val people = listOf(
-    DemoResult("jim-dev", "Android dev"),
-    DemoResult("joe-dev", "Android dev"),
-    DemoResult("jane-dev", "Android dev"),
-    DemoResult("jack-dev", "Linux dev"),
-    DemoResult("josh-dev", "Windows dev"),
-    DemoResult("jeremy-dev", "Ios dev"),
 
-)
 
 
 @Composable
@@ -84,17 +64,53 @@ private fun HomeScreen(){
     var selectedTab by rememberSaveable {
         mutableStateOf("Repositories")
     }
-    var submittedQuery by rememberSaveable{
+    var submittedQuery by remember{
         mutableStateOf<String?>(null)
     }
 
+    var results by remember {
+        mutableStateOf<List<SearchResult>>(emptyList())
+    }
+
+    var isLoading by remember {mutableStateOf(false)}
+    var errorMessage by remember {mutableStateOf<String?>(null)}
+
+    val scope = rememberCoroutineScope()
+    var searchJob by remember {mutableStateOf<Job?>(null)}
     val focusManager = LocalFocusManager.current
 
     fun submitSearch(){
-        if (query.isNotBlank()){
-            submittedQuery = query.trim()
-            focusManager.clearFocus()
+        val cleanQuery = query.trim()
+        if (cleanQuery.isEmpty() || isLoading) return
+
+        val searchPeople = selectedTab == "People"
+
+        focusManager.clearFocus()
+        searchJob?.cancel()
+
+        submittedQuery = cleanQuery
+        results = emptyList()
+        errorMessage = null
+        isLoading = true
+
+        searchJob = scope.launch {
+            try {
+                results = GitHubApi.search(
+                    query = cleanQuery,
+                    searchPeople = searchPeople
+                )
+            } catch (e: CancellationException){
+                throw e
+            } catch (e: GitHubApiException) {
+                errorMessage = e.message
+            } catch (e:IOException) {
+                errorMessage = "Could not connect to Github"
+            } catch (e:Exception) {
+                errorMessage = "Could not read Github's response"
+            }
+            isLoading = false
         }
+
     }
 
     Surface(
@@ -138,9 +154,12 @@ private fun HomeScreen(){
 
                     OutlinedButton(
                         onClick = {
+                            searchJob?.cancel()
                             selectedTab = tab
                             submittedQuery = null
-
+                            results = emptyList()
+                            errorMessage= null
+                            isLoading = false
                         },
                         modifier = Modifier
                             .weight(1f)
@@ -167,13 +186,13 @@ private fun HomeScreen(){
 
             Button(
                 onClick = { submitSearch() },
-                enabled = query.isNotBlank(),
+                enabled = query.isNotBlank() && !isLoading,
                 shape = RectangleShape,
                 modifier = Modifier
                     .fillMaxWidth()
                     .heightIn(min = 48.dp)
             ) {
-                Text("Search")
+                Text(if(isLoading) "Searching..." else "Search")
             }
 
             submittedQuery?.let { submitted ->
@@ -182,36 +201,42 @@ private fun HomeScreen(){
                     style = MaterialTheme.typography.bodyMedium,
                     color = Color.Gray
                 )
-                val source = if (selectedTab == "Repositories") {
-                    repositories
-                } else {
-                    people
-                }
+                when {
+                    isLoading -> {
+                        CircularProgressIndicator(
+                            color = Color.White
+                        )
+                    }
 
-                val results = source.filter {item ->
-                    item.title.contains(submitted, ignoreCase= true) ||
-                            item.description.contains(submitted, ignoreCase = true)
-                }
+                    errorMessage != null -> {
+                        Text(
+                            text = errorMessage.orEmpty(),
+                            color = Color.LightGray
+                        )
+                    }
 
+                    results.isEmpty() -> {
+                        Text(
+                            text = "No matches found",
+                            color = Color.LightGray
+                        )
+                    }
+                    else -> {
+                        LazyColumn(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .weight(1f),
+                            verticalArrangement = Arrangement.spacedBy(12.dp),
+                            contentPadding = PaddingValues(bottom = 16.dp)
+                        ) {
+                            items(
+                                items = results,
+                                key = { result -> result.id }
 
-                if (results.isEmpty()){
-                    Text(
-                        text = "No matches",
-                        color = Color.LightGray
-                    )
-                }
-                LazyColumn(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .weight(1f),
-                    verticalArrangement = Arrangement.spacedBy(12.dp),
-                    contentPadding = PaddingValues(bottom = 16.dp)
-                ) {
-                    items(
-                        items = results,
-                        key = { result -> result.title }
+                            ) { result -> ResultCard(result) }
 
-                    ) { result -> ResultCard(result) }
+                        }
+                    }
                 }
             }
         }
@@ -219,7 +244,7 @@ private fun HomeScreen(){
 }
 
 @Composable
-private fun ResultCard(result: DemoResult){
+private fun ResultCard(result: SearchResult){
     OutlinedCard(
         modifier = Modifier.fillMaxWidth(),
         shape = RectangleShape,
