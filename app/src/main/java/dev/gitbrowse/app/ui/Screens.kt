@@ -122,11 +122,13 @@ private fun HomeScreen(model: SearchViewModel = viewModel()){
     val results = uiState.results
     val isLoading = uiState.isLoading
     val errorMessage = uiState.errorMessage
+    val canSubmit = query.isNotBlank() &&
+        !(isLoading && query.trim() == submittedQuery)
 
     val focusManager = LocalFocusManager.current
 
     fun submitSearch(){
-        if (query.isBlank() || isLoading) return
+        if (!canSubmit) return
 
         focusManager.clearFocus()
 
@@ -207,7 +209,7 @@ private fun HomeScreen(model: SearchViewModel = viewModel()){
 
             Button(
                 onClick = { submitSearch() },
-                enabled = query.isNotBlank() && !isLoading,
+                enabled = canSubmit,
                 shape = RectangleShape,
                 modifier = Modifier
                     .fillMaxWidth()
@@ -270,6 +272,38 @@ private fun HomeScreen(model: SearchViewModel = viewModel()){
                                     }
                                 }
                             ) }
+
+                            item(key = "pagination") {
+                                Column(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                                ) {
+                                    uiState.loadMoreError?.let { message ->
+                                        Text(message, color = Color.LightGray)
+                                    }
+
+                                    if (uiState.hasMore) {
+                                        OutlinedButton(
+                                            onClick = model::loadMore,
+                                            enabled = !uiState.isLoadingMore,
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .heightIn(min = 48.dp),
+                                            shape = RectangleShape
+                                        ) {
+                                            Text(
+                                                when {
+                                                    uiState.isLoadingMore -> "Loading..."
+                                                    uiState.loadMoreError != null -> "Retry loading more"
+                                                    else -> "Load more"
+                                                }
+                                            )
+                                        }
+                                    } else {
+                                        Text("End of results", color = Color.Gray)
+                                    }
+                                }
+                            }
 
                         }
                     }

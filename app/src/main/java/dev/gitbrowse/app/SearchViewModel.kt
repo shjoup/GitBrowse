@@ -5,10 +5,13 @@ import androidx.lifecycle.viewModelScope
 import dev.gitbrowse.app.data.GitHubApi
 import dev.gitbrowse.app.data.GitHubApiException
 import dev.gitbrowse.app.data.SearchResult
+import dev.gitbrowse.app.data.SearchPage
 import dev.gitbrowse.app.data.RepositoryDetails
 import dev.gitbrowse.app.data.ProfileDetails
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -18,9 +21,14 @@ import java.io.IOException
 
 data class SearchUiState(
     val submittedQuery: String? = null,
+    val searchPeople: Boolean = false,
     val results: List<SearchResult> = emptyList(),
     val isLoading: Boolean = false,
-    val errorMessage: String? = null
+    val errorMessage: String? = null,
+    val page: Int = 0,
+    val hasMore: Boolean = false,
+    val isLoadingMore: Boolean = false,
+    val loadMoreError: String? = null
 )
 data class RepositoryUiState(
     val fullName: String? = null,
@@ -42,7 +50,9 @@ data class ProfileUiState(
     val repositoriesError: String? = null
 )
 
-class SearchViewModel : ViewModel() {
+class SearchViewModel(
+    private val searchRequest: suspend (String, Boolean, Int) -> SearchPage = GitHubApi::search
+) : ViewModel() {
 
 
     private var profileReposJob: Job? = null
@@ -212,8 +222,12 @@ class SearchViewModel : ViewModel() {
 
     fun search(query: String, searchPeople: Boolean) {
         val cleanQuery = query.trim()
+        val current = mutableState.value
 
-        if (cleanQuery.isEmpty() || mutableState.value.isLoading) {
+        if (cleanQuery.isEmpty() ||
+            (current.isLoading && current.submittedQuery == cleanQuery &&
+                current.searchPeople == searchPeople)
+        ) {
             return
         }
 
@@ -221,40 +235,74 @@ class SearchViewModel : ViewModel() {
 
         mutableState.value = SearchUiState(
             submittedQuery = cleanQuery,
+            searchPeople = searchPeople,
             isLoading = true
         )
 
         searchJob = viewModelScope.launch {
             try {
-                val results = GitHubApi.search(
-                    query = cleanQuery,
-                    searchPeople = searchPeople
-                )
+                val response = searchRequest(cleanQuery, searchPeople, 1)
+                currentCoroutineContext().ensureActive()
 
                 mutableState.value = mutableState.value.copy(
-                    results = results
+                    results = response.items.distinctBy { it.id },
+                    page = 1,
+                    hasMore = response.hasNextPage,
+                    isLoading = false
                 )
             } catch (e: CancellationException) {
                 throw e
-            } catch (e: GitHubApiException) {
-                mutableState.value = mutableState.value.copy(
-                    errorMessage = e.message ?: "Search failed."
-                )
-            } catch (e: IOException) {
-                mutableState.value = mutableState.value.copy(
-                    errorMessage =
-                        "Could not connect to GitHub. Check your connection."
-                )
             } catch (e: Exception) {
+                currentCoroutineContext().ensureActive()
                 mutableState.value = mutableState.value.copy(
-                    errorMessage = "Could not read GitHub's response."
+                    errorMessage = searchErrorMessage(e),
+                    isLoading = false
                 )
             }
-
-            mutableState.value = mutableState.value.copy(
-                isLoading = false
-            )
         }
+    }
+
+    fun loadMore() {
+        val current = mutableState.value
+        val query = current.submittedQuery ?: return
+
+        if (current.isLoading || current.isLoadingMore || !current.hasMore) {
+            return
+        }
+
+        val nextPage = current.page + 1
+        mutableState.value = current.copy(
+            isLoadingMore = true,
+            loadMoreError = null
+        )
+
+        searchJob = viewModelScope.launch {
+            try {
+                val response = searchRequest(query, current.searchPeople, nextPage)
+                currentCoroutineContext().ensureActive()
+
+                mutableState.value = mutableState.value.copy(
+                    results = (mutableState.value.results + response.items).distinctBy { it.id },
+                    page = nextPage,
+                    hasMore = response.hasNextPage,
+                    isLoadingMore = false
+                )
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                currentCoroutineContext().ensureActive()
+                mutableState.value = mutableState.value.copy(
+                    isLoadingMore = false,
+                    loadMoreError = searchErrorMessage(e)
+                )
+            }
+        }
+    }
+
+    private fun searchErrorMessage(error: Exception): String = when (error) {
+        is GitHubApiException -> error.message ?: "Search failed."
+        is IOException -> "Could not connect to GitHub. Check your connection."
+        else -> "Could not read GitHub's response."
     }
 
     fun reset() {
