@@ -360,4 +360,69 @@ object GitHubApi {
             connection.disconnect()
         }
     }
+    suspend fun readme(
+        fullName: String
+    ): String? = withContext(Dispatchers.IO) {
+        val parts = fullName.split('/')
+
+        require(parts.size == 2 && parts.all { it.isNotBlank() }) {
+            "Expected owner/repository"
+        }
+
+        val path = parts.joinToString("/") {
+            URLEncoder.encode(it, "UTF-8").replace("+", "%20")
+        }
+
+        val connection = URI.create(
+            "https://api.github.com/repos/$path/readme"
+        ).toURL().openConnection() as HttpURLConnection
+
+        try {
+            currentCoroutineContext().ensureActive()
+
+            connection.requestMethod = "GET"
+            connection.connectTimeout = 10_000
+            connection.readTimeout = 15_000
+
+            connection.setRequestProperty(
+                "Accept",
+                "application/vnd.github.raw+json"
+            )
+            connection.setRequestProperty(
+                "X-GitHub-Api-Version",
+                "2022-11-28"
+            )
+            connection.setRequestProperty(
+                "User-Agent",
+                "GitBrowse-Android"
+            )
+
+            val status = connection.responseCode
+            currentCoroutineContext().ensureActive()
+
+            if (status == 404) {
+                return@withContext null
+            }
+
+            if (status !in 200..299) {
+                val message = when (status) {
+                    403 -> "GitHub declined the README request."
+                    429 -> "GitHub's rate limit was reached."
+                    else -> "Could not load README (HTTP $status)."
+                }
+
+                throw GitHubApiException(message)
+            }
+
+            val text = connection.inputStream
+                .bufferedReader(Charsets.UTF_8)
+                .use { it.readText() }
+
+            currentCoroutineContext().ensureActive()
+
+            text
+        } finally {
+            connection.disconnect()
+        }
+    }
 }

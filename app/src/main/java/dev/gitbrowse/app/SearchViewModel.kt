@@ -26,7 +26,10 @@ data class RepositoryUiState(
     val fullName: String? = null,
     val repository: RepositoryDetails? = null,
     val isLoading: Boolean = false,
-    val errorMessage: String? = null
+    val errorMessage: String? = null,
+    val readme: String? = null,
+    val isLoadingReadme: Boolean = false,
+    val readmeError: String? = null
 )
 
 data class ProfileUiState(
@@ -51,8 +54,12 @@ class SearchViewModel : ViewModel() {
         mutableRepository.asStateFlow()
 
     private var repositoryJob:Job? = null
+    private var readmeJob: Job? = null
+
     fun openRepository(fullName:String){
         repositoryJob?.cancel()
+        readmeJob?.cancel()
+        readmeJob = null
 
         mutableRepository.value = RepositoryUiState(
             fullName = fullName,
@@ -66,6 +73,7 @@ class SearchViewModel : ViewModel() {
                     fullName = fullName,
                     repository = repository
                 )
+                loadReadme()
             } catch (e: CancellationException){
                 throw e
             } catch (e: Exception){
@@ -90,7 +98,52 @@ class SearchViewModel : ViewModel() {
     fun closeRepository(){
         repositoryJob?.cancel()
         repositoryJob = null
+        readmeJob?.cancel()
+        readmeJob = null
         mutableRepository.value = RepositoryUiState()
+    }
+
+    fun loadReadme() {
+        val current = mutableRepository.value
+        val fullName = current.fullName ?: return
+
+        if (current.repository == null || current.isLoadingReadme) {
+            return
+        }
+
+        readmeJob?.cancel()
+        mutableRepository.value = current.copy(
+            isLoadingReadme = true,
+            readmeError = null
+        )
+
+        readmeJob = viewModelScope.launch {
+            try {
+                val readme = GitHubApi.readme(fullName)
+                mutableRepository.value = mutableRepository.value.copy(
+                    readme = readme,
+                    isLoadingReadme = false
+                )
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                val message = when (e) {
+                    is GitHubApiException ->
+                        e.message ?: "Could not load README."
+
+                    is IOException ->
+                        "Could not connect to GitHub."
+
+                    else ->
+                        "Could not read the README."
+                }
+
+                mutableRepository.value = mutableRepository.value.copy(
+                    isLoadingReadme = false,
+                    readmeError = message
+                )
+            }
+        }
     }
 
     private val mutableProfile = MutableStateFlow(

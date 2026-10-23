@@ -14,7 +14,8 @@ import dev.gitbrowse.app.RepositoryUiState
 fun RepositoryScreen(
     state: RepositoryUiState,
     onBack: () -> Unit,
-    onRetry: () -> Unit
+    onRetry: () -> Unit,
+    onRetryReadme: () -> Unit
 ) {
     val repository = state.repository
     val error = state.errorMessage
@@ -75,6 +76,11 @@ fun RepositoryScreen(
                             Text("Language: ${repository.language}")
                         }
                     }
+
+                    ReadmeSection(
+                        state = state,
+                        onRetry = onRetryReadme
+                    )
                 }
             }
         }
