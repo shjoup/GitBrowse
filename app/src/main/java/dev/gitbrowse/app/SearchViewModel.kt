@@ -33,11 +33,16 @@ data class ProfileUiState(
     val login: String? = null,
     val profile: ProfileDetails? = null,
     val isLoading: Boolean = false,
-    val errorMessage: String? = null
+    val errorMessage: String? = null,
+    val repositories: List<SearchResult> = emptyList(),
+    val isLoadingRepositories: Boolean = false,
+    val repositoriesError: String? = null
 )
 
 class SearchViewModel : ViewModel() {
 
+
+    private var profileReposJob: Job? = null
     private val mutableRepository = MutableStateFlow(
         RepositoryUiState()
     )
@@ -98,6 +103,7 @@ class SearchViewModel : ViewModel() {
     private var profileJob:Job? = null
     fun openProfile(login:String){
         profileJob?.cancel()
+        profileReposJob?.cancel()
 
         mutableProfile.value = ProfileUiState(
             login = login,
@@ -111,6 +117,8 @@ class SearchViewModel : ViewModel() {
                     login = login,
                     profile = profile
                 )
+
+                loadProfileRepositories()
             } catch (e: CancellationException){
                 throw e
             } catch (e: Exception){
@@ -135,6 +143,9 @@ class SearchViewModel : ViewModel() {
     fun closeProfile(){
         profileJob?.cancel()
         profileJob = null
+
+        profileReposJob?.cancel()
+        profileReposJob = null
         mutableProfile.value = ProfileUiState()
     }
 
@@ -197,5 +208,50 @@ class SearchViewModel : ViewModel() {
         searchJob?.cancel()
         searchJob = null
         mutableState.value = SearchUiState()
+    }
+
+    fun loadProfileRepositories() {
+        val current = mutableProfile.value
+        val login = current.login ?: return
+
+        if (current.profile == null || current.isLoadingRepositories) {
+            return
+        }
+
+        profileReposJob?.cancel()
+
+        mutableProfile.value = current.copy(
+            isLoadingRepositories = true,
+            repositoriesError = null
+        )
+
+        profileReposJob = viewModelScope.launch {
+            try {
+                val repositories = GitHubApi.profileRepositories(login)
+
+                mutableProfile.value = mutableProfile.value.copy(
+                    repositories = repositories,
+                    isLoadingRepositories = false
+                )
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                val message = when (e) {
+                    is GitHubApiException ->
+                        e.message ?: "Could not load repositories."
+
+                    is IOException ->
+                        "Could not connect to GitHub."
+
+                    else ->
+                        "Could not read the repository list."
+                }
+
+                mutableProfile.value = mutableProfile.value.copy(
+                    isLoadingRepositories = false,
+                    repositoriesError = message
+                )
+            }
+        }
     }
 }

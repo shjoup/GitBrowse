@@ -6,6 +6,7 @@ import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 import org.intellij.lang.annotations.Language
 import org.json.JSONObject
+import org.json.JSONArray
 import java.net.HttpURLConnection
 import java.net.URI
 import java.net.URLEncoder
@@ -283,6 +284,79 @@ object GitHubApi {
                 publicRepos = json.getInt("public_repos"),
             )
         } finally{
+            connection.disconnect()
+        }
+    }
+    suspend fun profileRepositories(
+        login: String
+    ): List<SearchResult> = withContext(Dispatchers.IO) {
+        val encodedLogin = URLEncoder.encode(
+            login,
+            "UTF-8"
+        ).replace("+", "%20")
+
+        val connection = URI.create(
+            "https://api.github.com/users/$encodedLogin/repos" +
+                    "?sort=updated&direction=desc&per_page=30&page=1"
+        ).toURL().openConnection() as HttpURLConnection
+
+        try {
+            currentCoroutineContext().ensureActive()
+
+            connection.requestMethod = "GET"
+            connection.connectTimeout = 10_000
+            connection.readTimeout = 15_000
+
+            connection.setRequestProperty(
+                "Accept",
+                "application/vnd.github+json"
+            )
+            connection.setRequestProperty(
+                "X-GitHub-Api-Version",
+                "2022-11-28"
+            )
+            connection.setRequestProperty(
+                "User-Agent",
+                "GitBrowse-Android"
+            )
+
+            val status = connection.responseCode
+            currentCoroutineContext().ensureActive()
+
+            if (status !in 200..299) {
+                val message = when (status) {
+                    404 -> "This profile is no longer available."
+                    403 -> "GitHub declined this request."
+                    429 -> "GitHub's rate limit was reached."
+                    else -> "Could not load repositories (HTTP $status)."
+                }
+
+                throw GitHubApiException(message)
+            }
+
+            val body = connection.inputStream
+                .bufferedReader(Charsets.UTF_8)
+                .use { it.readText() }
+
+            currentCoroutineContext().ensureActive()
+
+            val items = JSONArray(body)
+
+            List(items.length()) { index ->
+                val item = items.getJSONObject(index)
+
+                SearchResult(
+                    id = item.getLong("id"),
+                    title = item.getString("full_name"),
+                    description = if (item.isNull("description")) {
+                        "No description available."
+                    } else {
+                        item.getString("description")
+                    },
+                    repositoryFullName = item.getString("full_name")
+                )
+            }
+        } finally {
             connection.disconnect()
         }
     }
